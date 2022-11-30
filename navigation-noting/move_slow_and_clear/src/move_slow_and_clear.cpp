@@ -64,7 +64,7 @@ namespace move_slow_and_clear
     {
       pt.x = global_pose.pose.position.x + i * clearing_distance_;
       pt.y = global_pose.pose.position.y + i * clearing_distance_;
-      global_poly.push_back(pt);
+      global_poly.push_back(pt);//使用vector容器提供的插入数据的方法。
 
       pt.x = global_pose.pose.position.x + i * clearing_distance_;
       pt.y = global_pose.pose.position.y + -1.0 * i * clearing_distance_;

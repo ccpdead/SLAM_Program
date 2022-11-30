@@ -87,11 +87,12 @@ namespace move_base
         action_goal_pub_ = action_nh.advertise<move_base_msgs::MoveBaseActionGoal>("goal", 1);
         recovery_status_pub_ = action_nh.advertise<move_base_msgs::RecoveryStatus>("recovery_status", 1);
 
-        //$ 订阅rviz下发的move_base_simple中的goal话题，获取目标点
+        //$ 提供一个goal的回调机制来支持rviz设置动态goal目标
         ros::NodeHandle simple_nh("move_base_simple");
         // movebase导航目标接收动作服务器，接收到导航目标后，进入到goalCB函数发送导航目标
         goal_sub_ = simple_nh.subscribe<geometry_msgs::PoseStamped>("goal", 1, boost::bind(&MoveBase::goalCB, this, _1));
 
+        //! 局部规划器会使用inscribed_radius和circumscribed_radius检查车辆是否碰到障碍物
         //内接半径
         private_nh.param("local_costmap/inscribed_radius", inscribed_radius_, 0.325);
         //外接半径
@@ -102,17 +103,17 @@ namespace move_base
         private_nh.param("conservative_reset_dist", conservative_reset_dist_, 3.0);
         //设置是否在movebase规划失败后关闭costmap服务
         private_nh.param("shutdown_costmaps", shutdown_costmaps_, false);
+        //设置是否允许旋转清除操作
         private_nh.param("clearing_rotation_allowed", clearing_rotation_allowed_, true);
         //启用恢复行为
         private_nh.param("recovery_behavior_enabled", recovery_behavior_enabled_, true);
 
-        //^初始化全局规划器，和局部规划器的指针和各自的costmap，这里的两个规划器用到的地图实质上是对Costmap2DROS类的实例，
-        //^这个类Ros对costmap的封装，类函数start（）回调用各层地图的active（）函数， 开始订阅传感器的话题。
-
-        //! 全局规划器代价地图goal_costmap_ros_
+        //初始化全局规划器，和局部规划器的指针和各自的costmap，这里的两个规划器用到的地图实质上是对Costmap2DROS类的实例，
+        //这个类Ros对costmap的封装，类函数start（）回调用各层地图的active（）函数， 开始订阅传感器的话题。
+        //------------------------------------------------------------------------------------------------
+        //! 初始化全局规划器代价地图 goal_costmap_ros_
         planner_costmap_ros_ = new costmap_2d::Costmap2DROS("global_costmap", tf_);
         planner_costmap_ros_->pause();
-        //$ 初始化全局规划器，planner_指针。
         try
         {
             planner_ = bgp_loader_.createInstance(global_planner);
@@ -124,10 +125,9 @@ namespace move_base
             exit(1);
         }
 
-        //! 本地规划器代价地图controller_costmap_ros_
+        //! 初始化局部规划器代价地图 controller_costmap_ros_
         controller_costmap_ros_ = new costmap_2d::Costmap2DROS("local_costmap", tf_);
         controller_costmap_ros_->pause();
-        //$ 初始化本地规划器，tc_指针。
         try
         {
             tc_ = blp_loader_.createInstance(local_planner);
@@ -139,12 +139,12 @@ namespace move_base
             ROS_FATAL("Failed to create the %s planner, are you sure it is properly registered and that the containing library is built? Exception: %s", local_planner.c_str(), ex.what());
             exit(1);
         }
+        //------------------------------------------------------------------------------------------------
+        //! 让代价地图开始接收传感器数据以更新地图
+        planner_costmap_ros_->start();    //全局costmap
+        controller_costmap_ros_->start(); //局部costmap
 
-        //% 根据传感器数据动态更新全局和本地的代价地图。
-        planner_costmap_ros_->start();
-        controller_costmap_ros_->start();
-
-        //这里创建一个make_plan的服务，当调用此服务时只规划全局路径，但不移动机器人。
+        //! 发布全局规划服务
         make_plan_srv_ = private_nh.advertiseService("make_plan", &MoveBase::planService, this);
 
         //发布一个清除costmap的服务，当调用此服务后，清除机器人全部的costmap（包括global，local）
@@ -158,7 +158,7 @@ namespace move_base
             controller_costmap_ros_->stop();
         }
 
-        //% 若加载恢复行为没有参数，则加载默认的恢复行为。
+        //! 加载默认错误恢复行为
         if (!loadRecoveryBehaviors(private_nh))
         {
             //$ 在loadDefaultRecoveryBehaviors函数中加载对应的恢复行为插件，清除代价地图的恢复行为，原地旋转的恢复行为，代价地图重置，再次原地旋转，加载错误报告等等等。。。
@@ -176,14 +176,15 @@ namespace move_base
         //$ 执行movebase路径规划的动作服务器
         as_->start();
 
-        //这里创建一个动态参数服务器，用于动态的更改movebase参数
+        //! 开启movebase的动态参数配置
         dsrv_ = new dynamic_reconfigure::Server<move_base::MoveBaseConfig>(ros::NodeHandle("~"));
         dynamic_reconfigure::Server<move_base::MoveBaseConfig>::CallbackType cb = boost::bind(&MoveBase::reconfigureCB, this, _1, _2);
 
         //每次更新参数后，进入到movebzse：：reconfigureCB函数，从新配置movebase参数
         dsrv_->setCallback(cb);
     }
-    //￥ reconfigureCB函数在每次参数被动态更改后进入。
+
+    //% reconfigureCB函数在每次参数被动态更改后进入。
     void MoveBase::reconfigureCB(move_base::MoveBaseConfig &config, uint32_t level)
     {
         boost::recursive_mutex::scoped_lock l(configuration_mutex_);
@@ -780,6 +781,7 @@ namespace move_base
 
         //局部规划频率。
         ros::Rate r(controller_frequency_);
+
         //如果代价地图被关闭，在这里重新启动。
         if (shutdown_costmaps_)
         {
@@ -938,22 +940,20 @@ namespace move_base
         return hypot(p1.pose.position.x - p2.pose.position.x, p1.pose.position.y - p2.pose.position.y);
     }
 
-    //%----------------------------------------------------------------
-    /* <5> 局部规划 MoveBase::executeCycle
-    executeCycle函数的作用是进行局部规划，函数先声明了将要发布的速度，然后获取当前位姿并格式转换。 */
+    //^----------------------------------------------------------------
+    //% <5> 局部规划 MoveBase::executeCycle
+    // executeCycle函数的作用是进行局部规划，函数先声明了将要发布的速度，然后获取当前位姿并格式转换
     bool MoveBase::executeCycle(geometry_msgs::PoseStamped &goal)
     {
         boost::recursive_mutex::scoped_lock ecl(configuration_mutex_);
         //首先声明速度度信息。
         geometry_msgs::Twist cmd_vel;
-
         //声明全局姿态。
         geometry_msgs::PoseStamped global_pose;
         //从全局代价地图上获取机器人的当前位姿。
         getRobotPose(global_pose, planner_costmap_ros_);
         //把当前为子储存在current_position中。
         const geometry_msgs::PoseStamped &current_position = global_pose;
-
         // feedback指的是从服务端轴哦其反馈给客户端的信息，把当前机器人的位姿反馈给客户端。
         move_base_msgs::MoveBaseFeedback feedback;
         feedback.base_position = current_position;
@@ -969,13 +969,12 @@ namespace move_base
             last_oscillation_reset_ = ros::Time::now();
             //震荡位姿设置为当前的位姿。
             oscillation_pose_ = current_position;
-
             //如果上次的恢复行为有震荡引起，我们则重新设置恢复行为的引导。
             if (recovery_trigger_ == OSCILLATION_R)
                 recovery_index_ = 0;
         }
 
-        //检测局部代价地图是否是当前的。
+        //检擦局部代价地图是不是当前的，若不是，则认为传感器超时，发送zero指令
         if (!controller_costmap_ros_->isCurrent())
         {
             ROS_WARN("[%s]:Sensor data is out of date, we're not going to allow commanding of the base for safety", ros::this_node::getName().c_str());
@@ -991,28 +990,27 @@ namespace move_base
         {
             //重置标志位。
             new_global_plan_ = false;
-
             ROS_DEBUG_NAMED("move_base", "Got a new plan...swap pointers");
-
             // do a pointer swap under mutex
             std::vector<geometry_msgs::PoseStamped> *temp_plan = controller_plan_;
+            /*--------------------------------lock--------------------------*/
             //在指针的保护下，交换latest_plan和controller_plan的值。
             boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
-            // controller_plan_储存（当前最新的，ok的待到达的全局规划）
+            //将当前全局规划得到的全局路径給contorller_plan，用于局部规划器控制机器人
             controller_plan_ = latest_plan_;
-            //使得全局规划好的planner_plan经由latest——plan一路传递到controller_plan供局部规划器使用。
+            //使得全局规划好的planner_plan经由latest_plan一路传递到controller_plan供局部规划器使用。
             latest_plan_ = temp_plan;
             lock.unlock();
+            /*------------------------------unlock---------------------------*/
             ROS_DEBUG_NAMED("move_base", "pointers swapped!");
 
             //在实例tc_上调用局部规划器BaseLocalPlanner的类函数setPlan()，
             //把全局规划的结果传递给局部规划器，如果传递失败，推出并返回。
-            if (!tc_->setPlan(*controller_plan_))
+            if (!tc_->setPlan(*controller_plan_)) //在这里调用局部规划器
             {
                 // ABORT and SHUTDOWN COSTMAPS
                 ROS_ERROR("Failed to pass global plan to the controller, aborting.");
                 resetState();
-
                 //如果传递失败，停止全局规划线程。
                 lock.lock();
                 runPlanner_ = false;
@@ -1089,50 +1087,44 @@ namespace move_base
                 //恢复行为触发器标志为 长时间困在以小片区域（震荡状态）
                 recovery_trigger_ = OSCILLATION_R;
             }
-
             {
                 boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(controller_costmap_ros_->getCostmap()->getMutex()));
 
-                //局部规划器实例tc_被传入到全局规划后，调用conputeVelocityCommands函数计算速度储存到cmd_vel中。
+                // @局部规划调用conputeVelocityCommands函数计算速度，储存到cmd_vel中。
                 if (tc_->computeVelocityCommands(cmd_vel))
                 {
                     ROS_DEBUG_NAMED("move_base", "Got a valid command from the local planner: %.3lf, %.3lf, %.3lf",
                                     cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z);
                     //若成功计算速度，上一次有效的局部控制的时间设置为当前。
                     last_valid_control_ = ros::Time::now();
-                    //向地盘发送速度控制消息，一个循环发送一次速度指令。
-                    vel_pub_.publish(cmd_vel);
+                    vel_pub_.publish(cmd_vel); //! 向地盘发送速度控制消息，一个循环发送一次速度指令。
                     if (recovery_trigger_ == CONTROLLING_R)
                         //如果恢复行为触发器的值为局部规划失败，把索引置为0。
                         recovery_index_ = 0;
                 }
-                /*
-                        若computeVelocityCommands(cmd_vel)函数计算失败，
-                        且超时，则进入对应恢复行为，若未超时，则发布零速制停机器人，重新全局规划，再进行下一次局部规划。 */
-                //若速度计算失败
-                else
+                else // @DWA速度规划失败
                 {
+                    /*
+                    若computeVelocityCommands(cmd_vel)函数计算失败，
+                    且超时，则进入对应恢复行为，若未超时，则发布零速制停机器人，重新全局规划，再进行下一次局部规划。
+                    */
                     ROS_DEBUG_NAMED("move_base", "The local planner could not find a valid plan.");
                     //计算局部规划用时限制
                     ros::Time attempt_end = last_valid_control_ + ros::Duration(controller_patience_);
-
                     //若局部规划用时超出限制。
                     if (ros::Time::now() > attempt_end)
                     {
                         //发布 0速度，进入恢复行为，触发器重置为局部规划失败。
                         publishZeroVelocity();
-                        state_ = CLEARING;
+                        state_ = CLEARING;//! 进入恢复模式
                         recovery_trigger_ = CONTROLLING_R;
                     }
-                    //若局部规划用时没有超出限制。
-                    else
+                    else//若局部规划用时没有超出限制。
                     {
-                        //发布 0速度，在机器人当前位置再次进入到全局规划中。
                         last_valid_plan_ = ros::Time::now();
                         planning_retries_ = 0;
                         state_ = PLANNING;
                         publishZeroVelocity();
-
                         // enable the planner thread in case it isn't running on a clock
                         boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
                         runPlanner_ = true;
@@ -1141,17 +1133,15 @@ namespace move_base
                     }
                 }
             }
-
             break;
 
-        //如果全局规划失败，进入恢复行为模式，我们尝试用用户提供的恢复行为去清除周围障碍物。
-        case CLEARING:
+        //@如果全局规划失败，进入恢复行为模式，我们尝试用用户提供的恢复行为去清除周围障碍物。
+        case CLEARING: //清除 costmap恢复模式
             ROS_DEBUG_NAMED("move_base", "In clearing/recovery state");
-            //如果允许使用恢复行为，且恢复行为索引值小于恢复姓为数组的大小。
+            //@-----------------------------------------进入恢复模式，以及执行vector中的4个恢复方式
             if (recovery_behavior_enabled_ && recovery_index_ < recovery_behaviors_.size())
             {
                 ROS_DEBUG_NAMED("move_base_recovery", "Executing behavior %u of %zu", recovery_index_ + 1, recovery_behaviors_.size());
-
                 move_base_msgs::RecoveryStatus msg;
                 msg.pose_stamped = current_position;
                 msg.current_recovery_number = recovery_index_;
@@ -1161,6 +1151,13 @@ namespace move_base
                 recovery_status_pub_.publish(msg);
 
                 //开始恢复行为，在ececuteCycle的循环中一次次迭代恢复行为。
+                /*
+                recovery_behavior[0,1,2,3]
+                0-conservative_reset,
+                1-rotate_recovery,
+                2-aggressive_reset,
+                3-rotate_recovery
+                */
                 recovery_behaviors_[recovery_index_]->runBehavior();
 
                 //上一次震荡重置时间设置为现在。
@@ -1170,15 +1167,13 @@ namespace move_base
                 ROS_DEBUG_NAMED("move_base_recovery", "Going back to planning state");
                 last_valid_plan_ = ros::Time::now();
                 planning_retries_ = 0;
-                state_ = PLANNING;
+                state_ = PLANNING; //将movebase标志转化为planning，从新进入规划模式
 
                 // update the index of the next recovery behavior that we'll try
                 recovery_index_++;
             }
-            //若恢复行为无效。
             else
-            {
-                //打印 “所有恢复行为都失败了，关闭全局规划器”
+            {//@ 当所有的恢复方式都失败之后，关闭规划器
                 ROS_DEBUG_NAMED("move_base_recovery", "All recovery behaviors have failed, locking the planner and disabling it.");
                 // disable the planner thread
                 boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
@@ -1187,23 +1182,23 @@ namespace move_base
 
                 ROS_DEBUG_NAMED("move_base_recovery", "Something should abort after this.");
 
-                //反馈失败的具体信息。
-                if (recovery_trigger_ == CONTROLLING_R)
+                //恢复触发器
+                if (recovery_trigger_ == CONTROLLING_R) //控制
                 {
                     ROS_ERROR("Aborting because a valid control could not be found. Even after executing all recovery behaviors");
                     as_->setAborted(move_base_msgs::MoveBaseResult(), "Failed to find a valid control. Even after executing recovery behaviors.");
                 }
-                else if (recovery_trigger_ == PLANNING_R)
+                else if (recovery_trigger_ == PLANNING_R) //规划
                 {
                     ROS_ERROR("Aborting because a valid plan could not be found. Even after executing all recovery behaviors");
                     as_->setAborted(move_base_msgs::MoveBaseResult(), "Failed to find a valid plan. Even after executing recovery behaviors.");
                 }
-                else if (recovery_trigger_ == OSCILLATION_R)
+                else if (recovery_trigger_ == OSCILLATION_R) //震荡
                 {
                     ROS_ERROR("Aborting because the robot appears to be oscillating over and over. Even after executing all recovery behaviors");
                     as_->setAborted(move_base_msgs::MoveBaseResult(), "Robot is oscillating. Even after executing recovery behaviors.");
                 }
-                resetState();
+                resetState(); //重置状态
                 return true;
             }
             break;
@@ -1221,8 +1216,8 @@ namespace move_base
         // we aren't done yet
         return false;
     }
-    //%----------------------------------------------------------------
-    //! 重点！！！ 加载恢复行为模块。
+    //^----------------------------------------------------------------
+    //%加载恢复参数，若成功返回true
     bool MoveBase::loadRecoveryBehaviors(ros::NodeHandle node)
     {
         XmlRpc::XmlRpcValue behavior_list;
@@ -1235,6 +1230,7 @@ namespace move_base
                 {
                     if (behavior_list[i].getType() == XmlRpc::XmlRpcValue::TypeStruct)
                     {
+                        //! {name:'xxxxxx' type:'xxxxxx'}
                         if (behavior_list[i].hasMember("name") && behavior_list[i].hasMember("type"))
                         {
                             // check for recovery behaviors with the same name
@@ -1242,6 +1238,7 @@ namespace move_base
                             {
                                 if (behavior_list[j].getType() == XmlRpc::XmlRpcValue::TypeStruct)
                                 {
+                                    // 加载两个recovery/
                                     if (behavior_list[j].hasMember("name") && behavior_list[j].hasMember("type"))
                                     {
                                         std::string name_i = behavior_list[i]["name"];
@@ -1329,8 +1326,9 @@ namespace move_base
         // if we've made it here... we've constructed a recovery behavior list successfully
         return true;
     }
-    //%----------------------------------------------------------------
-    //加载默认的恢复行为函数
+
+    //^----------------------------------------------------------------
+    //% ----------------------------------------默认的恢复行为函数-----------------------------------------
     void MoveBase::loadDefaultRecoveryBehaviors()
     {
         recovery_behaviors_.clear();
@@ -1338,16 +1336,18 @@ namespace move_base
         {
             // we need to set some parameters based on what's been passed in to us to maintain backwards compatibility
             ros::NodeHandle n("~");
-            n.setParam("conservative_reset/reset_distance", conservative_reset_dist_);
-            n.setParam("aggressive_reset/reset_distance", circumscribed_radius_ * 4);
+            n.setParam("conservative_reset/reset_distance", conservative_reset_dist_); //被动复位模式，复位距离
+            n.setParam("aggressive_reset/reset_distance", circumscribed_radius_ * 4);  //主动复位模式，复位距离
 
             // first, we'll load a recovery behavior to clear the costmap
+            //@---------------------------------------代价地图被动恢复模式
             boost::shared_ptr<nav_core::RecoveryBehavior> cons_clear(recovery_loader_.createInstance("clear_costmap_recovery/ClearCostmapRecovery"));
             cons_clear->initialize("conservative_reset", &tf_, planner_costmap_ros_, controller_costmap_ros_);
-            recovery_behavior_names_.push_back("conservative_reset");
+            recovery_behavior_names_.push_back("conservative_reset"); //恢复行为名称
             recovery_behaviors_.push_back(cons_clear);
 
             // next, we'll load a recovery behavior to rotate in place
+            //@--------------------------------------------原地旋转
             boost::shared_ptr<nav_core::RecoveryBehavior> rotate(recovery_loader_.createInstance("rotate_recovery/RotateRecovery"));
             if (clearing_rotation_allowed_)
             {
@@ -1355,7 +1355,7 @@ namespace move_base
                 recovery_behavior_names_.push_back("rotate_recovery");
                 recovery_behaviors_.push_back(rotate);
             }
-
+            //@---------------------------------------代价地图主动恢复模式
             // next, we'll load a recovery behavior that will do an aggressive reset of the costmap
             boost::shared_ptr<nav_core::RecoveryBehavior> ags_clear(recovery_loader_.createInstance("clear_costmap_recovery/ClearCostmapRecovery"));
             ags_clear->initialize("aggressive_reset", &tf_, planner_costmap_ros_, controller_costmap_ros_);
@@ -1368,7 +1368,7 @@ namespace move_base
                 recovery_behaviors_.push_back(rotate);
                 recovery_behavior_names_.push_back("rotate_recovery");
             }
-        }
+        } //异常捕捉
         catch (pluginlib::PluginlibException &ex)
         {
             ROS_FATAL("Failed to load a plugin. This should not happen on default recovery behaviors. Error: %s", ex.what());

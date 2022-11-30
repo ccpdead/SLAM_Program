@@ -183,7 +183,7 @@ void CLaserOdometry2D::Init()
     last_odom_time = ros::Time::now();
 }
 
-
+//里程计计算
 void CLaserOdometry2D::odometryCalculation()
 {
     //==================================================================================

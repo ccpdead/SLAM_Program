@@ -1,3 +1,20 @@
-# Important! This is a discontinued repository.
-If you are looking for the RF2O pkg, please use this git: https://github.com/MAPIRlab/rf2o_laser_odometry
-Other interesting Robotics pkgs from the MAPIR group can be found here: https://github.com/MAPIRlab
+ ### 使用的C++库
+ 1. Boost
+ 2. Eigen
+ 3. MRPT(base， obs, maps, slam)
+
+``` 
+include_directories(
+  ${catkin_INCLUDE_DIRS}
+  ${Boost_INCLUDE_DIRS}
+  ${EIGEN_INCLUDE_DIRS}
+) 
+------------------------------------
+target_link_libraries(rf2o_laser_odometry_node
+   ${catkin_LIBRARIES}
+   ${Boost_LIBRARIES}
+   ${EIGEN_LIBRARIES}
+   ${MRPT_LIBS}
+)
+
+```
