@@ -8,17 +8,17 @@ PLUGINLIB_EXPORT_CLASS(move_slow_and_clear::MoveSlowAndClear, nav_core::Recovery
 namespace move_slow_and_clear
 {
   //初始化構造函數
-  MoveSlowAndClear::MoveSlowAndClear():global_costmap_(NULL), local_costmap_(NULL), 
-                                       initialized_(false), remove_limit_thread_(NULL), limit_set_(false){}
+  MoveSlowAndClear::MoveSlowAndClear() : global_costmap_(NULL), local_costmap_(NULL),
+                                         initialized_(false), remove_limit_thread_(NULL), limit_set_(false) {}
 
   MoveSlowAndClear::~MoveSlowAndClear()
   {
     delete remove_limit_thread_;
   }
 
-  void MoveSlowAndClear::initialize (std::string n, tf2_ros::Buffer* tf,
-      costmap_2d::Costmap2DROS* global_costmap,
-      costmap_2d::Costmap2DROS* local_costmap)
+  void MoveSlowAndClear::initialize(std::string n, tf2_ros::Buffer *tf,
+                                    costmap_2d::Costmap2DROS *global_costmap,
+                                    costmap_2d::Costmap2DROS *local_costmap)
   {
 
     //￥ 給指針分配空間
@@ -41,31 +41,28 @@ namespace move_slow_and_clear
     initialized_ = true;
   }
 
-  //￥ 運行
+  //!------------------------------------MoveSlowAndClear::runBehavior()----------------------------------------
   void MoveSlowAndClear::runBehavior()
   {
-    if(!initialized_)
+    if (!initialized_)
     {
       ROS_ERROR("This recovery behavior has not been initialized, doing nothing.");
       return;
     }
     ROS_WARN("Move slow and clear recovery behavior started.");
-    //￥ 初始化兩個坐標點
-    geometry_msgs::PoseStamped global_pose, local_pose;
 
-    global_costmap_->getRobotPose(global_pose);
-    local_costmap_->getRobotPose(local_pose);
-    //￥ 創建兩個vector向量類型數據
+    geometry_msgs::PoseStamped global_pose, local_pose;
+    global_costmap_->getRobotPose(global_pose);//获取机器人全局位置
+    local_costmap_->getRobotPose(local_pose);//获取机器人局部位置
+
     std::vector<geometry_msgs::Point> global_poly, local_poly;
     geometry_msgs::Point pt;
 
-    //￥ 在這裏，通過兩次計算來更改 global坐標
-    for(int i = -1; i <= 1; i+=2)
+    for (int i = -1; i <= 1; i += 2)//-1，1
     {
       pt.x = global_pose.pose.position.x + i * clearing_distance_;
       pt.y = global_pose.pose.position.y + i * clearing_distance_;
-      global_poly.push_back(pt);//使用vector容器提供的插入数据的方法。
-
+      global_poly.push_back(pt); 
       pt.x = global_pose.pose.position.x + i * clearing_distance_;
       pt.y = global_pose.pose.position.y + -1.0 * i * clearing_distance_;
       global_poly.push_back(pt);
@@ -73,46 +70,50 @@ namespace move_slow_and_clear
       pt.x = local_pose.pose.position.x + i * clearing_distance_;
       pt.y = local_pose.pose.position.y + i * clearing_distance_;
       local_poly.push_back(pt);
-
       pt.x = local_pose.pose.position.x + i * clearing_distance_;
       pt.y = local_pose.pose.position.y + -1.0 * i * clearing_distance_;
       local_poly.push_back(pt);
     }
 
-    //clear the desired space in the costmaps
-    std::vector<boost::shared_ptr<costmap_2d::Layer> >* plugins = global_costmap_->getLayeredCostmap()->getPlugins();
-    for (std::vector<boost::shared_ptr<costmap_2d::Layer> >::iterator pluginp = plugins->begin(); pluginp != plugins->end(); ++pluginp) {
-            boost::shared_ptr<costmap_2d::Layer> plugin = *pluginp;
-          if(plugin->getName().find("obstacles")!=std::string::npos){
-            boost::shared_ptr<costmap_2d::ObstacleLayer> costmap;
-            costmap = boost::static_pointer_cast<costmap_2d::ObstacleLayer>(plugin);
-            costmap->setConvexPolygonCost(global_poly, costmap_2d::FREE_SPACE);
-          }
+    // clear the desired space in the costmaps
+    // 清除成本图中所需的空间
+    std::vector<boost::shared_ptr<costmap_2d::Layer>> *plugins = global_costmap_->getLayeredCostmap()->getPlugins();
+    for (std::vector<boost::shared_ptr<costmap_2d::Layer>>::iterator pluginp = plugins->begin(); pluginp != plugins->end(); ++pluginp)
+    {
+      boost::shared_ptr<costmap_2d::Layer> plugin = *pluginp;
+      if (plugin->getName().find("obstacles") != std::string::npos)
+      {
+        boost::shared_ptr<costmap_2d::ObstacleLayer> costmap;
+        costmap = boost::static_pointer_cast<costmap_2d::ObstacleLayer>(plugin);
+        costmap->setConvexPolygonCost(global_poly, costmap_2d::FREE_SPACE);
+      }
     }
-     
-    plugins = local_costmap_->getLayeredCostmap()->getPlugins();
-    for (std::vector<boost::shared_ptr<costmap_2d::Layer> >::iterator pluginp = plugins->begin(); pluginp != plugins->end(); ++pluginp) {
-            boost::shared_ptr<costmap_2d::Layer> plugin = *pluginp;
-          if(plugin->getName().find("obstacles")!=std::string::npos){
-            boost::shared_ptr<costmap_2d::ObstacleLayer> costmap;
-            costmap = boost::static_pointer_cast<costmap_2d::ObstacleLayer>(plugin);
-            costmap->setConvexPolygonCost(local_poly, costmap_2d::FREE_SPACE);
-          }
-    } 
 
-    //lock... just in case we're already speed limited
+    plugins = local_costmap_->getLayeredCostmap()->getPlugins();
+    for (std::vector<boost::shared_ptr<costmap_2d::Layer>>::iterator pluginp = plugins->begin(); pluginp != plugins->end(); ++pluginp)
+    {
+      boost::shared_ptr<costmap_2d::Layer> plugin = *pluginp;
+      if (plugin->getName().find("obstacles") != std::string::npos)
+      {
+        boost::shared_ptr<costmap_2d::ObstacleLayer> costmap;
+        costmap = boost::static_pointer_cast<costmap_2d::ObstacleLayer>(plugin);
+        costmap->setConvexPolygonCost(local_poly, costmap_2d::FREE_SPACE);
+      }
+    }
+
+    // lock... just in case we're already speed limited
     boost::mutex::scoped_lock l(mutex_);
 
-    //get the old maximum speed for the robot... we'll want to set it back
+    // get the old maximum speed for the robot... we'll want to set it back
     //￥ 配置线速度与角速度的限制。
-    if(!limit_set_)
+    if (!limit_set_)
     {
-      if(!planner_nh_.getParam(max_trans_param_name_, old_trans_speed_))
+      if (!planner_nh_.getParam(max_trans_param_name_, old_trans_speed_))
       {
         ROS_ERROR("The planner %s, does not have the parameter %s", planner_nh_.getNamespace().c_str(), max_trans_param_name_.c_str());
       }
 
-      if(!planner_nh_.getParam(max_rot_param_name_, old_rot_speed_))
+      if (!planner_nh_.getParam(max_rot_param_name_, old_rot_speed_))
       {
         ROS_ERROR("The planner %s, does not have the parameter %s", planner_nh_.getNamespace().c_str(), max_rot_param_name_.c_str());
       }
@@ -127,6 +128,7 @@ namespace move_slow_and_clear
     distance_check_timer_ = private_nh_.createTimer(ros::Duration(0.1), &MoveSlowAndClear::distanceCheck, this);
   }
 
+  //@获取平方距离
   double MoveSlowAndClear::getSqDistance()
   {
     //创建一个坐标，并将机器人相对于全局坐标系的坐标保存下来
@@ -143,13 +145,13 @@ namespace move_slow_and_clear
   }
 
   //机器人移动距离判断
-  void MoveSlowAndClear::distanceCheck(const ros::TimerEvent& e)
+  void MoveSlowAndClear::distanceCheck(const ros::TimerEvent &e)
   {
-    if(limited_distance_ * limited_distance_ <= getSqDistance())
+    if (limited_distance_ * limited_distance_ <= getSqDistance())
     {
       ROS_INFO("Moved far enough, removing speed limit.");
-      //have to do this because a system call within a timer cb does not seem to play nice
-      if(remove_limit_thread_)
+      // have to do this because a system call within a timer cb does not seem to play nice
+      if (remove_limit_thread_)
       {
         remove_limit_thread_->join();
         delete remove_limit_thread_;
@@ -167,20 +169,22 @@ namespace move_slow_and_clear
     limit_set_ = false;
   }
 
+  //设置机器人速度？？？
   void MoveSlowAndClear::setRobotSpeed(double trans_speed, double rot_speed)
   {
-
     {
       dynamic_reconfigure::Reconfigure vel_reconfigure;
       dynamic_reconfigure::DoubleParameter new_trans;
       new_trans.name = max_trans_param_name_;
       new_trans.value = trans_speed;
       vel_reconfigure.request.config.doubles.push_back(new_trans);
-      try {
+      try
+      {
         planner_dynamic_reconfigure_service_.call(vel_reconfigure);
         ROS_INFO_STREAM("Recovery setting trans vel: " << trans_speed);
       }
-      catch(...) {
+      catch (...)
+      {
         ROS_ERROR("Something went wrong in the service call to dynamic_reconfigure");
       }
     }
@@ -190,11 +194,13 @@ namespace move_slow_and_clear
       new_rot.name = max_rot_param_name_;
       new_rot.value = rot_speed;
       rot_reconfigure.request.config.doubles.push_back(new_rot);
-      try {
+      try
+      {
         planner_dynamic_reconfigure_service_.call(rot_reconfigure);
         ROS_INFO_STREAM("Recovery setting rot vel: " << rot_speed);
       }
-      catch(...) {
+      catch (...)
+      {
         ROS_ERROR("Something went wrong in the service call to dynamic_reconfigure");
       }
     }

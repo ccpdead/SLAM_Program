@@ -54,7 +54,8 @@ RotateRecovery::~RotateRecovery()
 {
   delete world_model_;
 }
-
+//!--------------------------------------RotateRecovery::runBehavior()-------------------------------------
+//@该函数控制机器人旋转180度，然后再旋转到原位置，仅仅控制机器人进行旋转运动
 void RotateRecovery::runBehavior()
 {
   //初始化参数
@@ -77,7 +78,7 @@ void RotateRecovery::runBehavior()
   ros::Publisher vel_pub = n.advertise<geometry_msgs::Twist>("cmd_vel", 10);
 
   geometry_msgs::PoseStamped global_pose;
-  local_costmap_->getRobotPose(global_pose);
+  local_costmap_->getRobotPose(global_pose);//获取机器人位姿
 
   double current_angle = tf2::getYaw(global_pose.pose.orientation);
   double start_angle = current_angle;
@@ -86,7 +87,7 @@ void RotateRecovery::runBehavior()
 
   while (n.ok() &&
          (!got_180 ||
-          std::fabs(angles::shortest_angular_distance(current_angle, start_angle)) > tolerance_))
+          std::fabs(angles::shortest_angular_distance(current_angle, start_angle)) > tolerance_))//最短角距离
   {
     // Update Current Angle
     local_costmap_->getRobotPose(global_pose);
@@ -94,7 +95,7 @@ void RotateRecovery::runBehavior()
 
     // compute the distance left to rotate
     double dist_left;
-    if (!got_180)
+    if (!got_180)//没转够180度
     {
       // If we haven't hit 180 yet, we need to rotate a half circle plus the distance to the 180 point
       double distance_to_180 = std::fabs(angles::shortest_angular_distance(current_angle, start_angle + M_PI));
@@ -105,7 +106,7 @@ void RotateRecovery::runBehavior()
         got_180 = true;
       }
     }
-    else
+    else//转够180度后，再次转180度，回到原方向
     {
       // If we have hit the 180, we just have the distance back to the start
       dist_left = std::fabs(angles::shortest_angular_distance(current_angle, start_angle));
@@ -115,7 +116,7 @@ void RotateRecovery::runBehavior()
 
     // check if that velocity is legal by forward simulating
     double sim_angle = 0.0;
-    while (sim_angle < dist_left)
+    while (sim_angle < dist_left)//180--》0
     {
       double theta = current_angle + sim_angle;
 
@@ -132,6 +133,7 @@ void RotateRecovery::runBehavior()
     }
 
     // compute the velocity that will let us stop by the time we reach the goal
+    //计算速度，让我们在达到目标时停下来
     double vel = sqrt(2 * acc_lim_th_ * dist_left);
 
     // make sure that this velocity falls within the specified limits

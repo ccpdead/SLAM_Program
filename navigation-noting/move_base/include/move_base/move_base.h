@@ -254,8 +254,8 @@ namespace move_base {
        */
       
       std::vector<geometry_msgs::PoseStamped>* planner_plan_;
-      std::vector<geometry_msgs::PoseStamped>* latest_plan_;
-      std::vector<geometry_msgs::PoseStamped>* controller_plan_;
+      std::vector<geometry_msgs::PoseStamped>* latest_plan_;//记录最新的全局路径信息
+      std::vector<geometry_msgs::PoseStamped>* controller_plan_;//存放用于局部规划的路径
 
       //路径规划器标志位
       bool runPlanner_;
