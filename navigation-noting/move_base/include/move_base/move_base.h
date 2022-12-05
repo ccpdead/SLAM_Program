@@ -28,12 +28,14 @@ namespace move_base {
   //!action服务器
   typedef actionlib::SimpleActionServer<move_base_msgs::MoveBaseAction> MoveBaseActionServer;
 
+  //movabase标志
   enum MoveBaseState {
     PLANNING,//正处于规划路径
     CONTROLLING,//正在控制运动
     CLEARING//处于恢复或者清除状态，规划失败或控制运动失败。
   };
 
+  //恢复触发器
   enum RecoveryTrigger
   {
     PLANNING_R,//全局规划失败

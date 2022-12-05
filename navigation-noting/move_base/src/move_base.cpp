@@ -23,13 +23,13 @@ namespace move_base
   控制主体     MoveBase::executeCb | 收到目标，触发全局规划线程，循环执行局部规划
   全局规划线程 void MoveBase::planThread | 调用全局规划
   全局规划     MoveBase::makePlan | 调用全局规划器类方法，得到全局规划路线
-  局部规划     MoveBase::executeCycle | 传入全局路线，调用局部规划器类方法，得到速度控制指令 
+  局部规划     MoveBase::executeCycle | 传入全局路线，调用局部规划器类方法，得到速度控制指令
   */
 
   /**
    * @brief MoveBase类的构造函数进行了初始化工作，获取了服务器上的参数值。
-   * 
-   * @param tf 
+   *
+   * @param tf
    */
   MoveBase::MoveBase(tf2_ros::Buffer &tf) : tf_(tf),
                                             as_(NULL),
@@ -41,10 +41,8 @@ namespace move_base
                                             planner_plan_(NULL), latest_plan_(NULL), controller_plan_(NULL),
                                             runPlanner_(false), setup_(false), p_freq_change_(false), c_freq_change_(false), new_global_plan_(false)
   {
-    //实例化一个对象，一直执行回调函数executeCb
-    // as_是一个action服务器实例化后的指针，当执行as_->start（）时调用MoveBase::executeCb函数
+    //实例化ROSaction服务器，回调函数为 executeCb()
     as_ = new MoveBaseActionServer(ros::NodeHandle(), "move_base", boost::bind(&MoveBase::executeCb, this, _1), false);
-
     ros::NodeHandle private_nh("~");
     ros::NodeHandle nh;
     recovery_trigger_ = PLANNING_R;
@@ -188,9 +186,9 @@ namespace move_base
 
   /**
    * @brief 动态参数修改
-   * 
-   * @param config 
-   * @param level 
+   *
+   * @param config
+   * @param level
    */
   void MoveBase::reconfigureCB(move_base::MoveBaseConfig &config, uint32_t level)
   {
@@ -299,8 +297,8 @@ namespace move_base
 
   /**
    * @brief 导航目标回调函数，接收到导航目标后，通过action服务器发布出去
-   * 
-   * @param goal 
+   *
+   * @param goal
    */
   void MoveBase::goalCB(const geometry_msgs::PoseStamped::ConstPtr &goal)
   {
@@ -370,30 +368,31 @@ namespace move_base
 
   /**
    * @brief clear_costmap服务的回调函数
-   * 
-   * @param req 
-   * @param resp 
-   * @return true 
-   * @return false 
+   *
+   * @param req
+   * @param resp
+   * @return true
+   * @return false
    */
   bool MoveBase::clearCostmapsService(std_srvs::Empty::Request &req, std_srvs::Empty::Response &resp)
   {
     // clear the costmaps
     boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock_controller(*(controller_costmap_ros_->getCostmap()->getMutex()));
-    controller_costmap_ros_->resetLayers();
+    controller_costmap_ros_->resetLayers(); //重置局部路径规划的图层
 
+    // clear the costmaps
     boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock_planner(*(planner_costmap_ros_->getCostmap()->getMutex()));
-    planner_costmap_ros_->resetLayers();
+    planner_costmap_ros_->resetLayers(); //重置全局路径规划的图层
     return true;
   }
-  
+
   /**
    * @brief 全局规划函数
-   * 
-   * @param req 
-   * @param resp 
-   * @return true 
-   * @return false 
+   *
+   * @param req
+   * @param resp
+   * @return true
+   * @return false
    */
   bool MoveBase::planService(nav_msgs::GetPlan::Request &req, nav_msgs::GetPlan::Response &resp)
   {
@@ -409,7 +408,7 @@ namespace move_base
       return false;
     }
 
-    geometry_msgs::PoseStamped start;//
+    geometry_msgs::PoseStamped start; //
     // if the user does not specify a start pose, identified by an empty frame id, then use the robot's pose
     if (req.start.header.frame_id.empty())
     {
@@ -511,49 +510,42 @@ namespace move_base
 
     return true;
   }
-  
+
   /**
    * @brief Destroy the Move Base:: Move Base object
-   * 
+   *
    */
   MoveBase::~MoveBase()
   {
     recovery_behaviors_.clear();
-
     delete dsrv_;
-
     if (as_ != NULL)
       delete as_;
-
     if (planner_costmap_ros_ != NULL)
       delete planner_costmap_ros_;
-
     if (controller_costmap_ros_ != NULL)
       delete controller_costmap_ros_;
-
     planner_thread_->interrupt();
     planner_thread_->join();
-
     delete planner_thread_;
-
     delete planner_plan_;
     delete latest_plan_;
     delete controller_plan_;
-
     planner_.reset();
     tc_.reset();
   }
-  
+
   /**
-   * @brief 该函数先进行一些预备工作，如检查全局代价地图、起始位姿，然后将起始位姿的数据格式做转换
-   * 
-   * @param goal 
-   * @param plan 
-   * @return true 
-   * @return false 
+   * @brief 该函数先进行一些预备工作，如检查全局代价地图、检查起始位姿，进行全局规划
+   *
+   * @param goal
+   * @param plan
+   * @return true
+   * @return false
    */
   bool MoveBase::makePlan(const geometry_msgs::PoseStamped &goal, std::vector<geometry_msgs::PoseStamped> &plan)
   {
+    //获取全局规划的costmap图层
     boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(planner_costmap_ros_->getCostmap()->getMutex()));
 
     //初始化空
@@ -566,7 +558,7 @@ namespace move_base
       return false;
     }
 
-    //如果得不到机器人的起始位姿，返回false
+    //获取机器人在全局坐标系下的位姿
     geometry_msgs::PoseStamped global_pose;
     if (!getRobotPose(global_pose, planner_costmap_ros_))
     {
@@ -576,11 +568,11 @@ namespace move_base
 
     const geometry_msgs::PoseStamped &start = global_pose;
     /*
-        接下来是实际进行全局规划的函数，调用全局规划器的makePlan函数planner_-> makePlan(start, goal, plan)，
-        传入机器人当前位姿和目标，得到plan，若规划失败或得到的plan为空，返回false，否则返回true。 */
-
-    //调用BaseGlobalPlanner类的makePlan函数做全局规划
-    //如果全局规划失败，或者全局规划为空，则返回false
+    接下来是实际进行全局规划的函数，调用全局规划器的makePlan函数planner_-> makePlan(start, goal, plan)，
+    传入机器人当前位姿和目标，得到plan，若规划失败或得到的plan为空，返回false，否则返回true。
+    调用BaseGlobalPlanner类的makePlan函数做全局规划
+    如果全局规划失败，或者全局规划为空，则返回false
+    */
     if (!planner_->makePlan(start, goal, plan) || plan.empty())
     {
       ROS_DEBUG_NAMED("move_base", "Failed to find a  plan to point (%.2f, %.2f)",
@@ -588,13 +580,12 @@ namespace move_base
                       goal.pose.position.y);
       return false;
     }
-
     return true;
   }
-  
+
   /**
    * @brief 发布零速度，禁止机器人移动
-   * 
+   *
    */
   void MoveBase::publishZeroVelocity()
   {
@@ -604,13 +595,13 @@ namespace move_base
     cmd_vel.angular.z = 0.0;
     vel_pub_.publish(cmd_vel);
   }
-  
+
   /**
    * @brief 验证四元数是否正确。
-   * 
-   * @param q 
-   * @return true 
-   * @return false 
+   *
+   * @param q
+   * @return true
+   * @return false
    */
   bool MoveBase::isQuaternionValid(const geometry_msgs::Quaternion &q)
   {
@@ -648,9 +639,9 @@ namespace move_base
 
   /**
    * @brief 返回目标坐标在全局坐标轴下的位置
-   * 
-   * @param goal_pose_msg 
-   * @return geometry_msgs::PoseStamped 
+   *
+   * @param goal_pose_msg
+   * @return geometry_msgs::PoseStamped
    */
   geometry_msgs::PoseStamped MoveBase::goalToGlobalFrame(const geometry_msgs::PoseStamped &goal_pose_msg)
   {
@@ -664,6 +655,7 @@ namespace move_base
 
     try
     {
+      //在这里调用tf转换函数，讲发布的规划转移到机器人坐标系下
       tf_.transform(goal_pose_msg, global_pose, global_frame);
     }
     catch (tf2::TransformException &ex)
@@ -675,11 +667,11 @@ namespace move_base
 
     return global_pose;
   }
-  
+
   /**
-   * @brief 
-   * 
-   * @param event 
+   * @brief
+   *
+   * @param event
    */
   void MoveBase::wakePlanner(const ros::TimerEvent &event)
   {
@@ -690,7 +682,7 @@ namespace move_base
   /**
    * @brief planThread()的核心是调用makePlan函数，该函数中实际进行全局规划。全局规划线程时刻等待被executeCB函数唤醒，
    * @      当executeCB函数中唤醒planThread并将标志位runPlanner_设置为真，跳出内部的循环，继续进行下面部分
-   * 
+   *
    */
   void MoveBase::planThread()
   {
@@ -712,21 +704,18 @@ namespace move_base
         planner_cond_.wait(lock);
         wait_for_wake = false;
       }
-      // start_time设为当前时间。
       ros::Time start_time = ros::Time::now();
-
-      //把全局中被更新的全局目标planner_goal储存类临时目标。
+      //把全局规划目标作为临时目标
       geometry_msgs::PoseStamped temp_goal = planner_goal_;
       lock.unlock(); //线程解锁
       ROS_DEBUG_NAMED("move_base_plan_thread", "Planning...");
 
-      //全局规划初始化，清空数据。
+      //清空全局规划目标
       planner_plan_->clear();
-      //调用MoveBase类的makePlan函数，如果成功为临时目标制定全局规划 planner_plan_, 则返回true
+      //调用move_base::makePlan()函数进行全局路径规划
       bool gotPlan = n.ok() && makePlan(temp_goal, *planner_plan_);
 
-      //如果成功为临时目标制定全局规划
-      if (gotPlan)
+      if (gotPlan) //全局规划成功
       {
         //打印成功制定全局规划，并打印规划路线上的点数。
         ROS_DEBUG_NAMED("move_base_plan_thread", "Got Plan with %zu points!", planner_plan_->size());
@@ -740,7 +729,6 @@ namespace move_base
         last_valid_plan_ = ros::Time::now();
         planning_retries_ = 0;
         new_global_plan_ = true;
-
         ROS_DEBUG_NAMED("move_base_plan_thread", "Generated a plan from the base_global_planner");
 
         //确保只有我们还没到达目标时才启动controller以局部规划。
@@ -752,21 +740,21 @@ namespace move_base
           runPlanner_ = false;
         lock.unlock();
       }
-      //如果规划失败，且MoveBase还在planning的状态。
+      //@ 如果规划失败，且MoveBase还在planning的状态。
       else if (state_ == PLANNING)
       {
         ROS_DEBUG_NAMED("move_base_plan_thread", "No Plan...");
-        //容忍本次全局规划的时间 = 上次成功规划的时间 + 容忍时间。
+        //本次全局规划容忍时间 = 上次成功规划的时间 + 容忍时间。
         ros::Time attempt_end = last_valid_plan_ + ros::Duration(planner_patience_);
 
         lock.lock();
         //对同一目标的全局规划次数记录 +1
         planning_retries_++;
-        //如果runplanning为真，且目前超时或超次数，则进入恢复模式（默认为原地旋转）。
+        //如果runplanning为真，且目前超时或超次数，则进入恢复模式
         if (runPlanner_ &&
             (ros::Time::now() > attempt_end || planning_retries_ > uint32_t(max_planning_retries_)))
         {
-          // MoveBase状态设置为恢复模式
+          // 标志位设置为恢复模式
           state_ = CLEARING;
           //全局规划标志位false
           runPlanner_ = false;
@@ -798,7 +786,7 @@ namespace move_base
   /**
    * @brief executeCb是Action的回调函数，它是MoveBase控制流的主体，它调用了MoveBase内另外几个作为子部分的重要成员函数，先后完成了全局规划和局部规划。
    * @      在函数的开始部分，它对Action收到的目标进行四元数检测、坐标系转换，然后将其设置为全局规划的目标，并设置了一些标志位。
-   * @param move_base_goal 
+   * @param move_base_goal
    */
   void MoveBase::executeCb(const move_base_msgs::MoveBaseGoalConstPtr &move_base_goal)
   {
@@ -808,24 +796,24 @@ namespace move_base
       as_->setAborted(move_base_msgs::MoveBaseResult(), "Aborting on goal because it was sent with an invalid quaternion");
       return;
     }
-    //将目标位置转换到global坐标系下，（geometry_msgs形式）
+    //将目标位置转换到global坐标系下
     geometry_msgs::PoseStamped goal = goalToGlobalFrame(move_base_goal->target_pose);
     publishZeroVelocity();
     //启动全局规划。
     boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
-    //用接收到的目标goal来更新全局变量，即全局规划目标，这个值在planThread中被用来做全局规划的当前目标
+    //更新全局规划目标，这个值在planThread中被用来做全局规划的当前目标
     planner_goal_ = goal;
-    runPlanner_ = true;//全局规划标志位设置为true
-    planner_cond_.notify_one();//开始做全局规划并于此处堵塞。
+    runPlanner_ = true;         //全局规划标志位设置为true
+    planner_cond_.notify_one(); //开始做全局规划并于此处堵塞。
     lock.unlock();
-    /*     接下来，由于全局规划器线程绑定的函数plannerThread()里有planner_cond_对象的wait函数，
-        在这里调用notify会直接启动全局规划器线程，进行全局路径规划。 */
+    /* 接下来，由于全局规划器线程绑定的函数plannerThread()里有planner_cond_对象的wait函数，
+    在这里调用notify会直接启动全局规划器线程，进行全局路径规划。 */
 
-    //全局规划后，发布不妙到current_goal话题上
+    //发布全规划的目标goal
     current_goal_pub_.publish(goal);
-
+    
     //局部规划频率。
-    ros::Rate r(controller_frequency_);//10Hz
+    ros::Rate r(controller_frequency_); // 10Hz
 
     //如果代价地图被关闭，在这里重新启动。
     if (shutdown_costmaps_)
@@ -861,12 +849,12 @@ namespace move_base
       //      。如果受到取消行动命令，则直接结束返回。
       //  2；如果服务器未被抢占，或者被抢占的if结构已经执行完毕，接下来进行局部规划，调用executeCycle函数，并记录局部控制起始时间。
 
-      //如果action的服务器被抢占。
+      //如果action的服务器被抢占（可能是goal更新，或者取消）。
       if (as_->isPreemptRequested())
       {
         if (as_->isNewGoalAvailable())
         {
-          //如果获得了新的目标，接受并储存新目标，并就上述过程重新进行一遍。
+          //获得了新的目标，接受并储存新目标，通知planner线程工作。
           move_base_msgs::MoveBaseGoal new_goal = *as_->acceptNewGoal();
 
           //检测四元数是否有效。
@@ -980,10 +968,10 @@ namespace move_base
 
   /**
    * @brief 计算两点之间的直线距离
-   * 
-   * @param p1 
-   * @param p2 
-   * @return double 
+   *
+   * @param p1
+   * @param p2
+   * @return double
    */
   double MoveBase::distance(const geometry_msgs::PoseStamped &p1, const geometry_msgs::PoseStamped &p2)
   {
@@ -992,10 +980,10 @@ namespace move_base
 
   /**
    * @brief executeCycle函数的作用是进行局部规划，函数先声明了将要发布的速度，然后获取当前位姿并格式转换
-   * 
-   * @param goal 
-   * @return true 
-   * @return false 
+   *
+   * @param goal
+   * @return true
+   * @return false
    */
   bool MoveBase::executeCycle(geometry_msgs::PoseStamped &goal)
   {
@@ -1013,7 +1001,7 @@ namespace move_base
     feedback.base_position = current_position;
     as_->publishFeedback(feedback);
 
-    //做几个判断，判断机器人是否被困住（若是，则进入恢复行为，即针对机器人运动异常情况做出的指令，具体内容再该部分学习理解），
+    //做几个判断，判断机器人是否被困住（若是，则进入恢复行为，即针对机器人运动异常情况做出的指令.
     //并检查局部规划的地图是否是当前的，否则发布零速，停止规划，制停机器人。
 
     //若长时间内移动机器人的距离没有超过震荡距离，则认为机器人在震荡（长时间被困在一片校区与内），进入到恢复行为。
@@ -1039,8 +1027,7 @@ namespace move_base
     通过标志位判定全局规划是否得出新的路线，然后通过指针交换，将latest_plan_（最新的全局规划结果）
     的值传递给controller_plan_即局部规划使用，然后将上一次的局部规划路线传递给latest_plan。 */
 
-    // new_global_plan_标志位在planThread中被置为真，表示生成了全局规划。
-    if (new_global_plan_)
+    if (new_global_plan_) //判断是否已完成全局规划
     {
       //重置标志位。
       new_global_plan_ = false;
@@ -1060,7 +1047,7 @@ namespace move_base
 
       //在实例tc_上调用局部规划器BaseLocalPlanner的类函数setPlan()，
       //把全局规划的结果传递给局部规划器，如果传递失败，推出并返回。
-      if (!tc_->setPlan(*controller_plan_)) //在这里调用局部规划器
+      if (!tc_->setPlan(*controller_plan_)) //@ 局部规划失败后，调用下面的处理函数
       {
         // ABORT and SHUTDOWN COSTMAPS
         ROS_ERROR("Failed to pass global plan to the controller, aborting.");
@@ -1069,7 +1056,6 @@ namespace move_base
         lock.lock();
         runPlanner_ = false;
         lock.unlock();
-
         //停止Action服务器，打印“将全局规划传递到局部规规划器控制失败"
         as_->setAborted(move_base_msgs::MoveBaseResult(), "Failed to pass global plan to the controller.");
         return true;
@@ -1257,13 +1243,13 @@ namespace move_base
     // we aren't done yet
     return false;
   }
-  
+
   /**
    * @brief 加载用户指定的恢复机制
-   * 
-   * @param node 
-   * @return true 
-   * @return false 
+   *
+   * @param node
+   * @return true
+   * @return false
    */
   bool MoveBase::loadRecoveryBehaviors(ros::NodeHandle node)
   {
@@ -1376,7 +1362,7 @@ namespace move_base
 
   /**
    * @brief 加载默认的恢复机制，通过boost::shared_ptr共享指针实现
-   * 
+   *
    */
   void MoveBase::loadDefaultRecoveryBehaviors()
   {
@@ -1427,10 +1413,10 @@ namespace move_base
     return;
   }
   //%----------------------------------------------------------------
-  
+
   /**
    * @brief 重置movebase
-   * 
+   *
    */
   void MoveBase::resetState()
   {
@@ -1456,14 +1442,14 @@ namespace move_base
       controller_costmap_ros_->stop();
     }
   }
-  
+
   /**
    * @brief 在给定的代价图框架上获取机器人姿势
-   * 
-   * @param global_pose 
-   * @param costmap 
-   * @return true 
-   * @return false 
+   *
+   * @param global_pose
+   * @param costmap
+   * @return true
+   * @return false
    */
   bool MoveBase::getRobotPose(geometry_msgs::PoseStamped &global_pose, costmap_2d::Costmap2DROS *costmap)
   {
