@@ -228,12 +228,14 @@ namespace move_base {
       ros::Publisher current_goal_pub_, vel_pub_, action_goal_pub_, recovery_status_pub_;
       ros::Subscriber goal_sub_;
       ros::ServiceServer make_plan_srv_, clear_costmaps_srv_;
+
       bool shutdown_costmaps_, clearing_rotation_allowed_, recovery_behavior_enabled_;
       bool make_plan_clear_costmap_, make_plan_add_unreachable_goal_;
+
       double oscillation_timeout_, oscillation_distance_;
 
-      MoveBaseState state_;
-      RecoveryTrigger recovery_trigger_;
+      MoveBaseState state_;//存放movebase的状态标志
+      RecoveryTrigger recovery_trigger_;//存放movebase的恢复标志
 
       ros::Time last_valid_plan_, last_valid_control_, last_oscillation_reset_;
       geometry_msgs::PoseStamped oscillation_pose_;
@@ -255,14 +257,18 @@ namespace move_base {
        * 
        */
       
-      std::vector<geometry_msgs::PoseStamped>* planner_plan_;
+      std::vector<geometry_msgs::PoseStamped>* planner_plan_;//存放当前的全局路径信息
       std::vector<geometry_msgs::PoseStamped>* latest_plan_;//记录最新的全局路径信息
       std::vector<geometry_msgs::PoseStamped>* controller_plan_;//存放用于局部规划的路径
 
       //路径规划器标志位
       bool runPlanner_;
+      
+      //线程锁
       boost::recursive_mutex planner_mutex_;
+      //线程锁
       boost::condition_variable_any planner_cond_;
+
       geometry_msgs::PoseStamped planner_goal_;
       boost::thread* planner_thread_;
 

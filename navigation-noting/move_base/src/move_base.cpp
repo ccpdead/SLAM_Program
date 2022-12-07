@@ -25,7 +25,6 @@ namespace move_base
   全局规划     MoveBase::makePlan | 调用全局规划器类方法，得到全局规划路线
   局部规划     MoveBase::executeCycle | 传入全局路线，调用局部规划器类方法，得到速度控制指令
   */
-
   /**
    * @brief MoveBase类的构造函数进行了初始化工作，获取了服务器上的参数值。
    *
@@ -70,29 +69,26 @@ namespace move_base
     private_nh.param("make_plan_clear_costmap", make_plan_clear_costmap_, true);
     private_nh.param("make_plan_add_unreachable_goal", make_plan_add_unreachable_goal_, true);
 
-    //$ 初始化三个plan的缓冲池数组
+    // 三个vector向量存放全局规划路径，上次全局规划路径，以及局部规划路径
     planner_plan_ = new std::vector<geometry_msgs::PoseStamped>();
     latest_plan_ = new std::vector<geometry_msgs::PoseStamped>();
     controller_plan_ = new std::vector<geometry_msgs::PoseStamped>();
-    //$ 新建planner线程，入口函数planThread
+
     planner_thread_ = new boost::thread(boost::bind(&MoveBase::planThread, this));
 
-    //$ vel_pub_速度下发命令，将速度发送给机器人地盘
-    //$ current_goal_pub_当前目标发布指令，发布目标点
-    vel_pub_ = nh.advertise<geometry_msgs::Twist>("cmd_vel", 1);
+    vel_pub_ = nh.advertise<geometry_msgs::Twist>("cmd_vel", 1); //发布速度的topic
     current_goal_pub_ = private_nh.advertise<geometry_msgs::PoseStamped>("current_goal", 0);
 
-    //$ 动作行为发布，目标点以及恢复行为的信息
     ros::NodeHandle action_nh("move_base");
+    //定义action服务器，接收goal目标点
     action_goal_pub_ = action_nh.advertise<move_base_msgs::MoveBaseActionGoal>("goal", 1);
-    recovery_status_pub_ = action_nh.advertise<move_base_msgs::RecoveryStatus>("recovery_status", 1);
 
-    //$ 提供一个goal的回调机制来支持rviz设置动态goal目标
+    recovery_status_pub_ = action_nh.advertise<move_base_msgs::RecoveryStatus>("recovery_status", 1);
     ros::NodeHandle simple_nh("move_base_simple");
-    // movebase导航目标接收动作服务器，接收到导航目标后，进入到goalCB函数发送导航目标
+    //定义一个goal topic话题，接收poststamped地点数据
     goal_sub_ = simple_nh.subscribe<geometry_msgs::PoseStamped>("goal", 1, boost::bind(&MoveBase::goalCB, this, _1));
 
-    //! 局部规划器会使用inscribed_radius和circumscribed_radius检查车辆是否碰到障碍物
+    // 局部规划器会使用inscribed_radius和circumscribed_radius检查车辆是否碰到障碍物
     //内接半径
     private_nh.param("local_costmap/inscribed_radius", inscribed_radius_, 0.325);
     //外接半径
@@ -116,7 +112,7 @@ namespace move_base
     planner_costmap_ros_->pause();
     try
     {
-      planner_ = bgp_loader_.createInstance(global_planner);
+      planner_ = bgp_loader_.createInstance(global_planner); //实例化全局规划器
       planner_->initialize(bgp_loader_.getName(global_planner), planner_costmap_ros_);
     }
     catch (const pluginlib::PluginlibException &ex)
@@ -130,8 +126,9 @@ namespace move_base
     controller_costmap_ros_->pause();
     try
     {
-      tc_ = blp_loader_.createInstance(local_planner);
-      ROS_INFO("Created local_planner %s", local_planner.c_str());
+      ROS_INFO("Created local_planner %s", local_planner.c_str()); // dwa_local_planner/DWAPlannerROS
+
+      tc_ = blp_loader_.createInstance(local_planner); //实例化局部规划器
       tc_->initialize(blp_loader_.getName(local_planner), &tf_, controller_costmap_ros_);
     }
     catch (const pluginlib::PluginlibException &ex)
@@ -144,9 +141,8 @@ namespace move_base
     planner_costmap_ros_->start();    //全局costmap
     controller_costmap_ros_->start(); //局部costmap
 
-    //! 发布全局规划服务
+    //全局规划服务，调用此服务进行全局路径规划
     make_plan_srv_ = private_nh.advertiseService("make_plan", &MoveBase::planService, this);
-
     //发布一个清除costmap的服务，当调用此服务后，清除机器人全部的costmap（包括global，local）
     clear_costmaps_srv_ = private_nh.advertiseService("clear_costmaps", &MoveBase::clearCostmapsService, this);
 
@@ -158,7 +154,7 @@ namespace move_base
       controller_costmap_ros_->stop();
     }
 
-    //! 加载默认错误恢复行为
+    //!加载恢复机制配置
     if (!loadRecoveryBehaviors(private_nh))
     {
       //$ 在loadDefaultRecoveryBehaviors函数中加载对应的恢复行为插件，清除代价地图的恢复行为，原地旋转的恢复行为，代价地图重置，再次原地旋转，加载错误报告等等等。。。
@@ -793,47 +789,42 @@ namespace move_base
     //首先检测首的的目标位置的旋转四元数是否有效，若无效，则直接返回。
     if (!isQuaternionValid(move_base_goal->target_pose.pose.orientation))
     {
+      //关闭action服务器
       as_->setAborted(move_base_msgs::MoveBaseResult(), "Aborting on goal because it was sent with an invalid quaternion");
-      return;
+      return; //退出程序
     }
     //将目标位置转换到global坐标系下
     geometry_msgs::PoseStamped goal = goalToGlobalFrame(move_base_goal->target_pose);
     publishZeroVelocity();
-    //启动全局规划。
-    boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
+
     //更新全局规划目标，这个值在planThread中被用来做全局规划的当前目标
+    boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
     planner_goal_ = goal;
-    runPlanner_ = true;         //全局规划标志位设置为true
+    runPlanner_ = true;         //规划标志位设置为true
     planner_cond_.notify_one(); //开始做全局规划并于此处堵塞。
     lock.unlock();
-    /* 接下来，由于全局规划器线程绑定的函数plannerThread()里有planner_cond_对象的wait函数，
-    在这里调用notify会直接启动全局规划器线程，进行全局路径规划。 */
 
     //发布全规划的目标goal
     current_goal_pub_.publish(goal);
-    
+
     //局部规划频率。
     ros::Rate r(controller_frequency_); // 10Hz
 
-    //如果代价地图被关闭，在这里重新启动。
+    //如果costmap被关闭，这里重新打开costmap
     if (shutdown_costmaps_)
     {
       ROS_DEBUG_NAMED("move_base", "Starting up costmaps that were shut down previously");
-      planner_costmap_ros_->start();
-      controller_costmap_ros_->start();
+      planner_costmap_ros_->start();    //打开全局costmap
+      controller_costmap_ros_->start(); //打开局部costmap
     }
 
-    //上一次有效的局部规划时间设置为现在
-    last_valid_control_ = ros::Time::now();
-    //上一次有效的全局规划时间设置为现在
-    last_valid_plan_ = ros::Time::now();
-    //上一次震荡重置时间设置为现在。
-    last_oscillation_reset_ = ros::Time::now();
-    //对同一目标的全局规划记录归为0。
-    planning_retries_ = 0;
+    last_valid_control_ = ros::Time::now();     //记录局部规划当前时间
+    last_valid_plan_ = ros::Time::now();        //记录全局规划当前时间
+    last_oscillation_reset_ = ros::Time::now(); //记录震荡当前时间
+    planning_retries_ = 0;                      //规划索引值
 
+    //循环局部规划
     ros::NodeHandle n;
-    //全局规划结束；接下来循环效用executeCycle函数来控制机器人机器人进行局部规划，完成相应的跟随。
     while (n.ok())
     {
       //如果c_freq_change_即局部规划频率需要中途进行更改，用更改后的controller_frequency_来更新r值。
@@ -843,16 +834,15 @@ namespace move_base
         r = ros::Rate(controller_frequency_);
         c_freq_change_ = false;
       }
+
       //这里需要进行判断：
       //  1；如果action服务器被抢占，可能是局部规划进行中接受到新的目标，也可能是受到取消行动的命令。
       //      。如果收到新目标，放弃当前目标，重复上面对目标进行的操作，使用新目标，重新进行全局规划。
       //      。如果受到取消行动命令，则直接结束返回。
       //  2；如果服务器未被抢占，或者被抢占的if结构已经执行完毕，接下来进行局部规划，调用executeCycle函数，并记录局部控制起始时间。
-
-      //如果action的服务器被抢占（可能是goal更新，或者取消）。
-      if (as_->isPreemptRequested())
+      if (as_->isPreemptRequested()) //$action服务器被抢占
       {
-        if (as_->isNewGoalAvailable())
+        if (as_->isNewGoalAvailable()) //$接收到新的目标
         {
           //获得了新的目标，接受并储存新目标，通知planner线程工作。
           move_base_msgs::MoveBaseGoal new_goal = *as_->acceptNewGoal();
@@ -861,7 +851,7 @@ namespace move_base
           if (!isQuaternionValid(new_goal.target_pose.pose.orientation))
           {
             as_->setAborted(move_base_msgs::MoveBaseResult(), "Aborting on goal because it was sent with an invalid quaternion");
-            return;
+            return; //如果四元数无效，退出此程序
           }
           //将新坐标转换到全局坐标系下（map）
           goal = goalToGlobalFrame(new_goal.target_pose);
@@ -888,35 +878,26 @@ namespace move_base
           last_oscillation_reset_ = ros::Time::now();
           planning_retries_ = 0;
         }
-        else
+        else // $movebase服务器被取消指令抢占，重置服务器
         {
-          //否则，服务器的抢占是由于接受到了取消行动的命令。
-          //然后重置服务器状态。
           resetState();
-
           // action服务器清除相关内容，并调用setPreempted（）函数。
           ROS_DEBUG_NAMED("move_base", "Move base preempting the current goal");
           as_->setPreempted();
-
-          //取消命令后，返回。
-          return;
+          return; //退出程序
         }
       }
-
-      //服务器接收到目标后，如果没有被新目标或取消命令抢占
+      //$ ===========================如果movebase没有被抢占，则进入到规划阶段==========================
       //检查目标是否被转换到全局坐标系（map）下。
       if (goal.header.frame_id != planner_costmap_ros_->getGlobalFrameID())
       {
         goal = goalToGlobalFrame(goal);
+        recovery_index_ = 0; //恢复机制设为零
+        state_ = PLANNING;   // movebase状态设置为规划中。
 
-        //恢复行为索引重置为0；MoveBase状态重置为全局规划中。
-        recovery_index_ = 0;
-        state_ = PLANNING;
-
-        // we have a new goal so make sure the planner is awake
         lock.lock();
-        planner_goal_ = goal;
-        runPlanner_ = true;
+        planner_goal_ = goal; //更新全局规划目标
+        runPlanner_ = true;   //规划标志位置1
         planner_cond_.notify_one();
         lock.unlock();
 
@@ -924,7 +905,7 @@ namespace move_base
         ROS_DEBUG_NAMED("move_base", "The global frame for move_base has changed, new frame: %s, new goal position x: %.2f, y: %.2f", goal.header.frame_id.c_str(), goal.pose.position.x, goal.pose.position.y);
         current_goal_pub_.publish(goal);
 
-        // make sure to reset our timeouts and counters
+        //重置记录时间
         last_valid_control_ = ros::Time::now();
         last_valid_plan_ = ros::Time::now();
         last_oscillation_reset_ = ros::Time::now();
@@ -934,28 +915,24 @@ namespace move_base
       //记录开始局部规划的时刻为当前时间
       ros::WallTime start = ros::WallTime::now();
 
-      //调用executeCycle函数进行局部规划，传入目标和全局规划路线。
-      bool done = executeCycle(goal);
-
-      // if we're done, then we'll return from execute
+      bool done = executeCycle(goal); //局部规划开始
       if (done)
         return;
 
-      //记录从局部规划开始到这时的时间差。
-
+      //记录局部规划时间
       ros::WallDuration t_diff = ros::WallTime::now() - start;
-      //打印用多长时间完成操作。
       ROS_DEBUG_NAMED("move_base", "Full control cycle time: %.9f\n", t_diff.toSec());
 
       //用局部规划频率进行休眠。
       r.sleep();
+
       // cycleTime用来获取从 r实例初始化到 r实例被调用sleep函数的时间间隔。
       //若时间间隔超过了局部规划频率，并且还在局部规划中；打印未达到实际要求
       if (r.cycleTime() > ros::Duration(1 / controller_frequency_) && state_ == CONTROLLING)
         ROS_WARN("Control loop missed its desired rate of %.4fHz... the loop actually took %.4f seconds", controller_frequency_, r.cycleTime().toSec());
     }
 
-    //唤醒全局规划线程，以使局部规划能干净的退出。
+    //------------------------唤醒全局规划线程，以使局部规划能干净的退出。
     lock.lock();
     runPlanner_ = true;
     planner_cond_.notify_one();
@@ -979,7 +956,7 @@ namespace move_base
   }
 
   /**
-   * @brief executeCycle函数的作用是进行局部规划，函数先声明了将要发布的速度，然后获取当前位姿并格式转换
+   * @brief executeCycle()进行局部规划，函数先声明了将要发布的速度，然后获取当前位姿并格式转换
    *
    * @param goal
    * @return true
@@ -1039,10 +1016,9 @@ namespace move_base
       boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
       //将当前全局规划得到的全局路径給contorller_plan，用于局部规划器控制机器人
       controller_plan_ = latest_plan_;
-      //使得全局规划好的planner_plan经由latest_plan一路传递到controller_plan供局部规划器使用。
+      //将当前规划的全局路径储存成历史规划
       latest_plan_ = temp_plan;
       lock.unlock();
-      /*------------------------------unlock---------------------------*/
       ROS_DEBUG_NAMED("move_base", "pointers swapped!");
 
       //在实例tc_上调用局部规划器BaseLocalPlanner的类函数setPlan()，
@@ -1067,7 +1043,6 @@ namespace move_base
     }
 
     //对MoveBase状态进行判断，由于局部规划器在全局规划结束后才调用，所有会有以下几种结果。
-    // the move_base state machine, handles the control logic for navigation
     switch (state_)
     {
     //  1；
@@ -1129,7 +1104,7 @@ namespace move_base
       {
         boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(controller_costmap_ros_->getCostmap()->getMutex()));
 
-        // @局部规划调用conputeVelocityCommands函数计算速度，储存到cmd_vel中。
+        // ￥---------------------------DWA规划成功
         if (tc_->computeVelocityCommands(cmd_vel))
         {
           ROS_DEBUG_NAMED("move_base", "Got a valid command from the local planner: %.3lf, %.3lf, %.3lf",
@@ -1141,7 +1116,7 @@ namespace move_base
             //如果恢复行为触发器的值为局部规划失败，把索引置为0。
             recovery_index_ = 0;
         }
-        else // @DWA速度规划失败
+        else // ￥-------------------DWA速度规划失败
         {
           /*
           若computeVelocityCommands(cmd_vel)函数计算失败，
@@ -1151,14 +1126,13 @@ namespace move_base
           //计算局部规划用时限制
           ros::Time attempt_end = last_valid_control_ + ros::Duration(controller_patience_);
           //若局部规划用时超出限制。
-          if (ros::Time::now() > attempt_end)
+          if (ros::Time::now() > attempt_end)//局部规划超市，进入恢复状态
           {
-            //发布 0速度，进入恢复行为，触发器重置为局部规划失败。
             publishZeroVelocity();
-            state_ = CLEARING; //! 进入恢复模式
-            recovery_trigger_ = CONTROLLING_R;
+            state_ = CLEARING; // 进入恢复模式
+            recovery_trigger_ = CONTROLLING_R;//恢复模式为控制失败
           }
-          else //若局部规划用时没有超出限制。
+          else //局部规划没有超时，配置标志为规划状态，从新进入全局规划
           {
             last_valid_plan_ = ros::Time::now();
             planning_retries_ = 0;
@@ -1415,7 +1389,7 @@ namespace move_base
   //%----------------------------------------------------------------
 
   /**
-   * @brief 重置movebase
+   * @brief 重置movebase,清空全局规划路径，设置标志为规划中，
    *
    */
   void MoveBase::resetState()
