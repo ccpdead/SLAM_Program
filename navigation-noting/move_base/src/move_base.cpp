@@ -1069,41 +1069,36 @@ namespace move_base
               更像是不断循环进行的“短期规划”
               )
       */
-
+    //￥局部规划
       //如果全局规划成功，进入CONTROLLING状态中，开始寻找有效的速度控制
     case CONTROLLING:
       ROS_DEBUG_NAMED("move_base", "In controlling state.");
 
-      //检查是否到达终点，如果到达终点，结束。
+      //到达目标点，关闭规划线程
       if (tc_->isGoalReached())
       {
         ROS_DEBUG_NAMED("move_base", "Goal reached!");
         resetState();
-
         //结束全局规划线程。
         boost::unique_lock<boost::recursive_mutex> lock(planner_mutex_);
         //规划标志位 false
         runPlanner_ = false;
         lock.unlock();
-
         // Action返回成功。
         as_->setSucceeded(move_base_msgs::MoveBaseResult(), "Goal reached.");
         return true;
       }
 
-      //如果未到达终点，检查是否处于震荡状态。
+      //检查是否处于动荡状态，若处于动荡则movebase标志为恢复标志
       if (oscillation_timeout_ > 0.0 &&
           last_oscillation_reset_ + ros::Duration(oscillation_timeout_) < ros::Time::now())
       {
-        //如果震荡状态超时了，发布0速度。
-        publishZeroVelocity();
-        // MoveBase状态重置为恢复状态。
-        state_ = CLEARING;
+        publishZeroVelocity();             //如果震荡状态超时了，发布0速度
+        state_ = CLEARING;                 // MoveBase状态重置为恢复状态。
         recovery_trigger_ = OSCILLATION_R; //触发器标志为 震荡状态
       }
       {
         boost::unique_lock<costmap_2d::Costmap2D::mutex_t> lock(*(controller_costmap_ros_->getCostmap()->getMutex()));
-
         // ￥---------------------------DWA规划成功
         if (tc_->computeVelocityCommands(cmd_vel))
         {
@@ -1126,11 +1121,11 @@ namespace move_base
           //计算局部规划用时限制
           ros::Time attempt_end = last_valid_control_ + ros::Duration(controller_patience_);
           //若局部规划用时超出限制。
-          if (ros::Time::now() > attempt_end)//局部规划超市，进入恢复状态
+          if (ros::Time::now() > attempt_end) //局部规划超市，进入恢复状态
           {
             publishZeroVelocity();
-            state_ = CLEARING; // 进入恢复模式
-            recovery_trigger_ = CONTROLLING_R;//恢复模式为控制失败
+            state_ = CLEARING;                 // 进入恢复模式
+            recovery_trigger_ = CONTROLLING_R; //恢复模式为控制失败
           }
           else //局部规划没有超时，配置标志为规划状态，从新进入全局规划
           {
@@ -1148,14 +1143,14 @@ namespace move_base
       }
       break;
 
+    //￥恢复模式
     //@如果全局规划失败，进入恢复行为模式，我们尝试用用户提供的恢复行为去清除周围障碍物。
     case CLEARING: //清除 costmap恢复模式
       ROS_DEBUG_NAMED("move_base", "In clearing/recovery state");
-      //@-----------------------------------------进入恢复模式，以及执行vector中的4个恢复方式
+      //@------------------------------进入恢复模式，以及执行vector中的4个恢复方式
       if (recovery_behavior_enabled_ && recovery_index_ < recovery_behaviors_.size())
       {
         //!----------------------------------Executing behaviors 0,1,2,3--------------------------------
-
         ROS_DEBUG_NAMED("move_base_recovery", "Executing behavior %u of %zu", recovery_index_ + 1, recovery_behaviors_.size());
         move_base_msgs::RecoveryStatus msg;
         msg.pose_stamped = current_position;
@@ -1171,7 +1166,6 @@ namespace move_base
         last_valid_plan_ = ros::Time::now();
         planning_retries_ = 0;
         state_ = PLANNING; //将movebase标志转化为planning，从新进入规划模式
-
         // update the index of the next recovery behavior that we'll try
         recovery_index_++;
       }
@@ -1213,7 +1207,6 @@ namespace move_base
       as_->setAborted(move_base_msgs::MoveBaseResult(), "Reached a case that should not be hit in move_base. This is a bug, please report it.");
       return true;
     }
-
     // we aren't done yet
     return false;
   }
